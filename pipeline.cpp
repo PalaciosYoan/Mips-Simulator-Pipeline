@@ -37,23 +37,34 @@ long binary2long(const bitset<B> &b)
     return s.x = b.to_ulong();
 }
 
-vector<bitset<32>> read_write(bitset<5> rd, bitset<5> rd2, bitset<5> write_reg, bitset<32> write_data, bool write_enable = false)
+vector<bitset<32>> read_reg(bitset<5> reg1, bitset<5> reg2)
 {
-    vector<bitset<32>> read;
-    read.push_back(bitset<32>((int)(registerfile[rd.to_ullong()])));
-    read.push_back(bitset<32>(registerfile[rd2.to_ullong()]));
-
-    if (write_enable)
-    {
-        registerfile[write_reg.to_ullong()] = (int)(write_data.to_ullong());
-        cout << registers[write_reg.to_ullong()] << " is modified to 0x" << hex << write_data.to_ullong() << endl;
-    }
-
-    return read;
+    vector<bitset<32>> read_reg;
+    read_reg.push_back(bitset<32>((int)(registerfile[reg1.to_ullong()])));
+    read_reg.push_back(bitset<32>((int)(registerfile[reg2.to_ullong()])));
+    return read_reg;
 }
 
-bitset<32> execute(bitset<4> alu_op, bitset<32> input1, bitset<32> input2)
+void write_back(bitset<5> write_reg, bitset<32> write_data)
 {
+    registerfile[write_reg.to_ullong()] = (int)(write_data.to_ullong());
+    cout << registers[write_reg.to_ullong()] << " is modified to 0x" << hex << write_data.to_ullong() << endl;
+}
+void i_jump(bitset<32> instruction)
+{
+    string temp = instruction.to_string().substr(16, 32);
+    temp = temp + "00";
+    bitset<26> jump_to_address(temp);
+    branch_target = bitset<32>((int)(next_pc.to_ullong()) + (int)(binary2long(jump_to_address)));
+    zero_output = bitset<1>(1);
+}
+
+bitset<32> execute(bitset<4> alu_op, bitset<32> input1, bitset<32> input2, bitset<32> instruction, bool branching = false)
+{
+    if (branching)
+    {
+        i_jump(instruction);
+    }
     if (alu_op.to_string() == "0010") // add
         return bitset<32>((int)(input1.to_ullong() + input2.to_ullong()));
     else if (alu_op.to_string() == "0000") // and
@@ -79,178 +90,99 @@ bitset<32> mem(bitset<32> data_address, bitset<32> write_data, bool read_data = 
     return bitset<32>(0);
 }
 
-class Iformatt
+class Decoder
 {
-protected:
-    bitset<5> RSadress;
-    bitset<5> RTadress;
-    bitset<16> ImmAddress;
-
-    vector<bitset<32>> read_data;
-
-    bool jump(bitset<32> instruction)
+    ////////////////////// J type helper functions /////////////////////
+    string jumpAdress(bitset<32> instruction)
     {
-        next_pc = bitset<32>(pc.to_ullong() + 4);
-        string temp = instruction.to_string().substr(16, 32);
-        temp = temp + "00";
-        bitset<26> jump_to_address(temp);
-        branch_target = bitset<32>((int)(next_pc.to_ullong()) + (int)(binary2long(jump_to_address)));
-        zero_output = bitset<1>(1);
-        return true;
+        bitset<28> temp_target = bitset<28>(instruction.to_string().substr(6, 32) + "00");
+        jump_target = bitset<32>(next_pc.to_string().substr(0, 4) + temp_target.to_string());
+        return "j";
     }
 
-    vector<string> operand_address(bitset<32> instruction)
+    ////////////////////// R type helper functions /////////////////////
+    void decode_r()
+    {
+
+        RSadress = bitset<5>(instruction.to_string().substr(6, 5));
+        RTadress = bitset<5>(instruction.to_string().substr(11, 5));
+        RDadress = bitset<5>(instruction.to_string().substr(16, 5));
+    }
+
+    void functionType()
+    {
+        string temp_function = instruction.to_string().substr(26, 6);
+        if (temp_function == "100000")
+        {
+            function = "add";
+        }
+        else if (temp_function == "100100")
+        {
+            function = "and";
+        }
+        else if (temp_function == "100111")
+        {
+            function = "nor";
+        }
+        else if (temp_function == "100101")
+        {
+            function = "or";
+        }
+        else if (temp_function == "101010")
+        {
+            function = "slt";
+        }
+        else if (temp_function == "100010")
+        {
+            function = "sub";
+        }
+    }
+    ////////////////////// I type helper functions /////////////////////
+    void I_imm_address(bitset<16> temp_imm)
+    { //Handles for negative addresses
+        string temp_result;
+        if (temp_imm.to_string().at(0) == '1')
+            temp_result = "1111111111111111" + temp_imm.to_string();
+
+        else if (temp_imm.to_string().at(0) == '0')
+            temp_result = "0000000000000000" + temp_imm.to_string();
+
+        ImmAddress = bitset<32>(temp_result);
+    }
+
+    void I_operand_address()
     {
         vector<string> result;
         string rs = instruction.to_string().substr(6, 5);
         string rt = instruction.to_string().substr(11, 5);
         string immediate = instruction.to_string().substr(16, 16);
+        RSadress = bitset<5>(rs);
+        RTadress = bitset<5>(rt);
 
-        result.push_back(rs);
-        result.push_back(rt);
-        result.push_back(immediate);
+        bitset<16> temp_ImmAddress = bitset<16>(immediate);
 
-        return result;
-    }
-
-    bitset<32> final_imm()
-    {
-        string temp_result;
-        if (ImmAddress.to_string().at(0) == '1')
-            temp_result = "1111111111111111" + ImmAddress.to_string();
-
-        else if (ImmAddress.to_string().at(0) == '0')
-            temp_result = "0000000000000000" + ImmAddress.to_string();
-
-        return bitset<32>(temp_result);
+        I_imm_address(temp_ImmAddress);
     }
 
 public:
-    bool i_formatt(bitset<32> instruction, string opcode)
-    {
-        vector<string> addresses = operand_address(instruction);
-        RSadress = bitset<5>(addresses[0]);
-        RTadress = bitset<5>(addresses[1]);
-        ImmAddress = bitset<16>(addresses[2]);
+    bitset<5> RSadress;
+    bitset<5> RTadress;
+    bitset<5> RDadress;
+    bitset<32> ImmAddress;
+    vector<bitset<32>> reg_values; //index 0 = RS, 1 = RT
+    string function;
 
-        bitset<32> ImmAddress_final = final_imm(); // Not sure if i need this
-        //The only reason we would need to use branch_target is for beq
-        read_data = read_write(RSadress, bitset<5>(0), bitset<5>(0), bitset<32>(0)); //i=0 => RS i=1 => RT
+    bitset<32> instruction;
 
-        bitset<32> data_address = execute(add_op, read_data[0], ImmAddress_final);
-        //5  5  5  32
-        if (opcode == "100011")
-        { //lw
-            bitset<32> input1 = mem(data_address, bitset<32>(0));
-            read_write(bitset<5>(0), bitset<5>(0), RTadress, input1, true); //updates reg
-        }
-        else if (opcode == "101011")
-        { //sw
-            vector<bitset<32>> read_reg = read_write(RTadress, bitset<5>(0), bitset<5>(0), bitset<32>(0));
-            mem(data_address, read_reg[0], false); //updates mem
-        }
-        else if (opcode == "000100")
-        { //BEQ
-            vector<bitset<32>> read_reg = read_write(bitset<5>(0), RTadress, bitset<5>(0), bitset<32>(0));
-            if (read_data[0].to_ullong() == read_reg[1].to_ullong())
-            {
-                jump(instruction);
-            }
-        }
-
-        return false;
-    }
-};
-Iformatt i_format;
-
-class rFormat
-{
-protected:
-    vector<bitset<5>> decode_r(bitset<32> instruction)
-    {
-        vector<bitset<5>> op;
-        op.push_back(bitset<5>(instruction.to_string().substr(6, 5)));  //rs
-        op.push_back(bitset<5>(instruction.to_string().substr(11, 5))); // rt
-        op.push_back(bitset<5>(instruction.to_string().substr(16, 5))); //rd
-        return op;
-    }
-
-    string functionType(bitset<32> instruction)
-    {
-        string function = instruction.to_string().substr(26, 6);
-        if (function == "100000")
-        {
-            return "add";
-        }
-        else if (function == "100100")
-        {
-            return "and";
-        }
-        else if (function == "100111")
-        {
-            return "nor";
-        }
-        else if (function == "100101")
-        {
-            return "or";
-        }
-        else if (function == "101010")
-        {
-            return "slt";
-        }
-        else if (function == "100010")
-        {
-            return "sub";
-        }
-        return "";
-    }
-
-public:
-    void r_format(bitset<32> instruction)
-    {
-        vector<bitset<5>> op = decode_r(instruction);
-        string function = functionType(instruction);
-
-        vector<bitset<32>> reg = read_write(op[0], op[1], bitset<5>(0), bitset<32>(0)); //returns rs, rt values
-        bitset<32> result;
-        if (function == "add")
-            result = execute(add_op, reg[0], reg[1]);
-        else if (function == "and")
-            result = execute(and_op, reg[0], reg[1]);
-        else if (function == "nor")
-            result = execute(nor_op, reg[0], reg[1]);
-        else if (function == "or")
-            result = execute(or_op, reg[0], reg[1]);
-        else if (function == "slt")
-            execute(slt_op, reg[0], reg[1]);
-        else if (function == "sub")
-            result = execute(sub_op, reg[0], reg[1]);
-        read_write(bitset<5>(0), bitset<5>(0), op[2], result, true);
-    }
-};
-rFormat r;
-
-class Decoder : public Iformatt
-{
-protected:
-    string jumpAdress(bitset<32> instruction)
-    {
-        bitset<28> temp_target = bitset<28>(instruction.to_string().substr(6, 32) + "00");
-        jump_target = bitset<32>(next_pc.to_string().substr(0, 4) + temp_target.to_string());
-        pc = jump_target;
-        next_pc = bitset<32>(pc.to_ullong() + 4);
-
-        cout << "pc is modified to 0x" << hex << pc.to_ullong() << endl;
-
-        return "j";
-    }
-
-public:
     string decode(bitset<32> instruction)
     {
+        this->instruction = instruction;
         string opcode = instruction.to_string().substr(0, 6);
         if (opcode == "000000")
-        { //r
+        {                                              //r
+            decode_r();                                //retrives RS, RT, RD
+            reg_values = read_reg(RSadress, RTadress); // retrives register value
+            functionType();                            //gets the type of function we will use
             return "r";
         }
 
@@ -260,7 +192,9 @@ public:
         }
 
         else if (opcode == "101011" || opcode == "100011" || opcode == "000100")
-        { // LW(0011) SW(1011)  BEQ(0100)
+        {                                              // LW(0011) SW(1011)  BEQ(0100)
+            I_operand_address();                       //gets RT, RS and IMM's address
+            reg_values = read_reg(RSadress, RTadress); //index 0 = RS, index 1 = RT
             return "i" + opcode;
         }
 
@@ -272,34 +206,16 @@ public:
         return "";
     }
 };
-Decoder decoder;
 
-class InstructionMem : public Decoder
+class InstructionMem
 {
 public:
     vector<bitset<32>> memory_instructions;
-    void increase_pc()
-    {
-        pc = bitset<32>(pc.to_ullong() + 4);
-    }
 
-    void updatePCValue()
-    {
-        if (zero_output.to_string() == "0")
-            increase_pc();
-        else
-        {
-            pc = branch_target;
-            zero_output = bitset<1>(0);
-        }
-
-        cout << "pc is modified to 0x" << hex << pc.to_ullong() << endl;
-    }
-
-    InstructionMem()
+    InstructionMem(string filename)
     {
         ifstream pFile;
-        pFile.open("sample_binary.txt");
+        pFile.open(filename);
         string cur_line;
         //memory_instructions.resize(MemSize);
 
@@ -326,44 +242,101 @@ public:
     }
 };
 
+void increase_pc()
+{
+    pc = bitset<32>(pc.to_ullong() + 4);
+}
+
+void updatePCValue()
+{
+    if (zero_output.to_string() == "1")
+    {
+        pc = branch_target;
+        zero_output = bitset<1>(0);
+    }
+
+    cout << "pc is modified to 0x" << hex << pc.to_ullong() << endl;
+}
+
 /////////////////////////////////////////////////////////////////////////////
-InstructionMem instructions;
 
 int main()
 {
+    string filename = "sample_binary.txt";
+    cout << "Enter the program file name to run:" << endl;
+    //cin >> filename;
+    cout << "\n";
     bitset<32> instruction;
-    next_pc = bitset<32>(pc.to_ullong() + 4);
+
+    InstructionMem fetch_instructions(filename);
+    Decoder decoder;
 
     string format;
-    bool needsUpdate = true;
 
     while (true)
     {
-        instruction = instructions.fetch_Instruction(pc);
+        instruction = fetch_instructions.fetch_Instruction(pc);
+        increase_pc();
+
         if (instruction.to_string() == "11111111111111111111111111111111")
             break;
+
         cout << "total_clock_cycles " << dec << total_clock_cycles << ":" << endl;
+
         format = decoder.decode(instruction);
-        needsUpdate = true;
+
         if (format == "j")
         {
-            needsUpdate = false;
+            pc = jump_target;
+            next_pc = bitset<32>(pc.to_ullong() + 4);
         }
 
         else if (format == "r")
         {
-            r.r_format(instruction);
+            bitset<32> result;
+            if (decoder.function == "add") //0 = RS 1 = RT
+                result = execute(add_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+            else if (decoder.function == "and")
+                result = execute(and_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+            else if (decoder.function == "nor")
+                result = execute(nor_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+            else if (decoder.function == "or")
+                result = execute(or_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+            else if (decoder.function == "slt")
+                execute(slt_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+            else if (decoder.function == "sub")
+                result = execute(sub_op, decoder.reg_values[0], decoder.reg_values[1], bitset<32>(0));
+
+            write_back(decoder.RDadress, result); // 2 = Rd
         }
 
         else if (format.length() > 1)
-        {
-            i_format.i_formatt(instruction, format.substr(1, 6));
+        { // I format instruction
+            string opcode = format.substr(1, 6);
+            bitset<32> data_address = execute(add_op, decoder.reg_values[0], decoder.ImmAddress, bitset<32>(0));
+
+            if (opcode == "100011")
+            { //lw
+                bitset<32> new_reg_value = mem(data_address, bitset<32>(0));
+                write_back(decoder.RTadress, new_reg_value);
+            }
+            else if (opcode == "101011")
+            {                                                    //sw
+                mem(data_address, decoder.reg_values[1], false); //updates mem
+            }
+            else if (opcode == "000100")
+            { //BEQ
+                if (decoder.reg_values[0].to_ullong() == decoder.reg_values[1].to_ullong())
+                    execute(bitset<4>(0), bitset<32>(0), bitset<32>(0), instruction, true);
+            }
         }
-        if (needsUpdate)
-            instructions.updatePCValue();
+        updatePCValue(); // This will update the pc value if zero output is 1 and it will always print pc value
+
         cout << "" << endl;
+
         total_clock_cycles += 1;
     }
+
     cout << "program terminated:" << endl;
     cout << "total execution time is " << dec << total_clock_cycles - 1 << " cycles" << endl;
 

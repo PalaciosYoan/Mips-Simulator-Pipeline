@@ -1,0 +1,3 @@
+1. Rewrite Single CPU implementation so it can work with pipeline Sun 5/2
+2. pipeline approach 5/3
+3. Do extra credit 5/4
