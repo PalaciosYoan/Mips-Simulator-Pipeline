@@ -27,7 +27,6 @@ bool instType = false;
 bool memWrite = false;
 bool memToReg = false;
 bool memRead = false;
-bool flush = false;
 int total_clock_cycles = 1;
 
 string registers[32] = {"$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3", "$t0", "$t1", "$t2", "$t3", "$t4", "$t5", "$t6", "$t7", "$s0", "$s1", "$s2", "$s3", "$s4", "$s5", "$s6", "$s7", "$t8", "$t9", "$k0", "$k1", "$gp", "$sp", "$fp", "$ra"};
@@ -270,7 +269,6 @@ class IFStage : public InstructionMem
 public:
     bool nop;
     bool ocupide = false;
-    bitset<32> curr_pc;
 };
 
 class IDStage : Decoder
@@ -279,8 +277,6 @@ public:
     bool nop;
     bitset<32> instruction;
     bool ocupide = false;
-    bool flush;
-    bitset<32> curr_pc;
 };
 
 class EXEStage
@@ -290,14 +286,12 @@ public:
     bitset<5> RT;
     bitset<5> RD;
     bitset<32> ImmAddress, RSVal, RTVal;
-    bitset<32> curr_pc;
     bitset<16> OGImm;
     bitset<4> alu_op;
     string opcode;
     bool is_I_format;
     bool is_r_format;
     bool nop;
-    bool flush;
     bool ocupide = false;
 };
 
@@ -306,16 +300,12 @@ class MemStage
 public:
     bitset<32> alu_Result;
     bitset<32> data_address, write_data;
-    bitset<32> curr_pc;
     bitset<5> RS, RT, write_reg;
     bool write_enable;
     bool is_r_format;
     bool is_I_format;
     bool nop;
     bool ocupide = false;
-    bool write_mem;
-    bool write_wb;
-    bool flush;
     string opcode;
 };
 
@@ -324,11 +314,8 @@ class WBStage
 public:
     bitset<5> write_reg, RS, RT;
     bitset<32> write_data, alu_result;
-    bitset<32> curr_pc;
     bool nop;
     bool is_execute;
-    bool flush;
-    bool write_wb;
 };
 
 class Stages
@@ -402,7 +389,6 @@ int main()
     string filename = "sample_binary3.txt";
     cout << "Enter the program file name to run:" << endl;
     //cin >> filename;
-    cout << filename << endl;
     cout << "\n";
     bitset<32> instruction;
     Stages cycleState, newCycleState;
@@ -423,7 +409,7 @@ int main()
 
         if (!cycleState.WB.nop)
         {
-            if (cycleState.WB.write_wb)
+            if (cycleState.WB.is_execute)
             {
                 RF.write_back(cycleState.WB.write_reg, cycleState.WB.write_data);
             }
@@ -432,90 +418,46 @@ int main()
         newCycleState.WB.nop = cycleState.MEM.nop;
         if (!cycleState.MEM.nop)
         {
-            newCycleState.WB.curr_pc = cycleState.MEM.curr_pc;
             if (cycleState.MEM.is_r_format)
             {
                 newCycleState.WB.write_reg = cycleState.MEM.write_reg;
                 newCycleState.WB.write_data = cycleState.MEM.alu_Result;
-                newCycleState.WB.write_wb = true;
+                newCycleState.WB.is_execute = true;
             }
-            if (cycleState.MEM.is_I_format)
+            if (cycleState.MEM.is_I_format && !cycleState.MEM.is_r_format)
             {
                 if (cycleState.MEM.opcode == "sw")
-                {
                     memory.write_mem(cycleState.MEM.data_address, cycleState.MEM.write_data);
-                    newCycleState.WB.write_wb = false;
-                }
+
                 else if (cycleState.MEM.opcode == "lw")
                 {
                     newCycleState.WB.write_reg = cycleState.MEM.write_reg;
                     newCycleState.WB.write_data = memory.read_mem(cycleState.MEM.data_address);
-                    newCycleState.WB.write_wb = true;
+                    newCycleState.WB.is_execute = true;
                 }
-            }
-            if (cycleState.MEM.flush)
-            {
-                newCycleState.WB.flush = true;
-            }
-            else
-            {
-                newCycleState.WB.flush = false;
             }
         }
 
         newCycleState.MEM.nop = cycleState.EXE.nop;
         if (!cycleState.EXE.nop)
         {
-            newCycleState.MEM.curr_pc = cycleState.EXE.curr_pc;
-            if (cycleState.EXE.flush)
-                newCycleState.MEM.flush = true;
-            else
-                newCycleState.MEM.flush = false;
-
             if (cycleState.EXE.is_r_format)
             {
                 newCycleState.MEM.is_r_format = true;
-                newCycleState.MEM.is_I_format = false;
-                newCycleState.MEM.write_mem = false;
-                newCycleState.MEM.write_wb = true;
                 newCycleState.MEM.write_reg = cycleState.EXE.RD;
                 newCycleState.MEM.alu_Result = execute.alu(cycleState.EXE.alu_op, cycleState.EXE.RSVal, cycleState.EXE.RTVal);
             }
             else if (cycleState.EXE.is_I_format)
             {
                 newCycleState.MEM.data_address = execute.alu(cycleState.EXE.alu_op, cycleState.EXE.RSVal, cycleState.EXE.ImmAddress);
-                newCycleState.MEM.write_data = cycleState.EXE.RTVal;
                 newCycleState.MEM.write_reg = cycleState.EXE.RT;
                 newCycleState.MEM.opcode = cycleState.EXE.opcode;
                 newCycleState.MEM.is_I_format = true;
-                newCycleState.MEM.is_r_format = false;
-                if (cycleState.EXE.opcode == "lw")
-                {
-                    newCycleState.MEM.write_wb = true;
-                    newCycleState.MEM.write_mem = false;
-                }
-                else if (cycleState.EXE.opcode == "sw")
-                {
-                    newCycleState.MEM.write_wb = false;
-                    newCycleState.MEM.write_mem = true;
-                }
-
-                // Add the portion of beq
-
+                //Add the portion of beq
                 if (cycleState.EXE.opcode == "beq")
                 {
-                    cout << "beq" << endl;
-                    if (cycleState.EXE.RSVal.to_ullong() == cycleState.EXE.RTVal.to_ullong())
-                    {
-                        newCycleState.ID.flush = true;
-                        newCycleState.EXE.flush = true;
+                    if (cycleState.EXE.RSVal.to_ullong() == cycleState.EXE.RSVal.to_ullong())
                         execute.i_jump(cycleState.EXE.OGImm);
-                    }
-                    else
-                    {
-                        newCycleState.ID.flush = false;
-                        newCycleState.EXE.flush = false;
-                    }
                 }
             }
         }
@@ -523,7 +465,6 @@ int main()
         if (!cycleState.ID.nop)
         {
             string formatType = decoder.decode(cycleState.ID.instruction);
-            newCycleState.EXE.curr_pc = cycleState.ID.curr_pc;
             if (formatType == "j")
             {
                 pc = jump_target;
@@ -533,7 +474,6 @@ int main()
             else if (formatType == "r")
             {
                 newCycleState.EXE.is_r_format = true;
-                newCycleState.EXE.is_I_format = false;
                 newCycleState.EXE.alu_op = controlUnit(cycleState.ID.instruction.to_string().substr(26, 6));
                 newCycleState.EXE.RS = decoder.RSadress;
                 newCycleState.EXE.RT = decoder.RTadress;
@@ -562,7 +502,6 @@ int main()
                     newCycleState.EXE.opcode = "beq";
                 }
                 newCycleState.EXE.is_I_format = true;
-                newCycleState.EXE.is_r_format = false;
                 newCycleState.EXE.RS = decoder.RSadress;
                 newCycleState.EXE.RT = decoder.RTadress;
                 newCycleState.EXE.RSVal = decoder.reg_values[0];
@@ -570,28 +509,20 @@ int main()
                 newCycleState.EXE.ImmAddress = decoder.ImmAddress;
                 newCycleState.EXE.OGImm = bitset<16>(cycleState.ID.instruction.to_string().substr(16, 32));
             }
-            if (cycleState.ID.flush)
-                newCycleState.EXE.flush = true;
-            else
-                newCycleState.EXE.flush = false;
         }
         newCycleState.ID.nop = cycleState.IF.nop;
 
         if (!cycleState.IF.nop)
         {
             newCycleState.ID.instruction = cycleState.IF.fetch_Instruction(pc);
-            newCycleState.ID.curr_pc = pc;
-
-            newCycleState.ID.flush = false;
 
             if (newCycleState.ID.instruction.to_string() == "11111111111111111111111111111111")
             {
                 newCycleState.ID.nop = true;
                 newCycleState.IF.nop = true;
             }
-            else
-                increase_pc();
         }
+        increase_pc();
         updatePCValue();
         cycleState = newCycleState;
         total_clock_cycles++;

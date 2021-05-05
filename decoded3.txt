@@ -1,0 +1,7 @@
+LW $t0 0x0000 $s0 : $t0=5
+LW $t3 0x0004 $s0 : $t3=10
+ADD $t4 $t1 $t2  : $t4= 37
+ADD $t4 $t2 $t0  : $t4 = 10
+SUB $t5 $t0 $t2 : $t5 = 0
+SW $t3 0xFFFC $s0 : $s0addrees = $t3
+
